@@ -1,8 +1,11 @@
 import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import warnings
+from distutils import log
 from distutils.errors import DistutilsSetupError
 from enum import IntEnum, auto
 from functools import lru_cache
@@ -220,15 +223,21 @@ class RustExtension:
                 script = "%s=%s.%s:run" % (name, base_mod, _script_name(executable))
                 entry_points.append(script)
 
+        log.info(f"RustExtension entrypoints: {entry_points}")
         return entry_points
 
-    def install_script(self, module_name: str, exe_path: str) -> None:
+    def install_script(self, module_name: str, exe_path: str, dylib_path: str, scripts_dir: str) -> None:
+        module_name = module_name.split(".")[-1]
         if self.script and self.binding == Binding.Exec:
             dirname, executable = os.path.split(exe_path)
             script_name = _script_name(module_name)
             file = os.path.join(dirname, f"{script_name}.py")
             with open(file, "w") as f:
+                log.info(f"RustExtension install_script: {repr(executable)}")
                 f.write(_SCRIPT_TEMPLATE.format(executable=repr(executable)))
+        log.info("Copying rust extension artifact from %s to %s", dylib_path, ext_path)
+        shutil.copyfile(dylib_path, exe_path)
+        self._chmod_strip(exe_path)
 
     def metadata(self, *, quiet: bool) -> "CargoMetadata":
         """Returns cargo metadata for this extension package.
@@ -237,6 +246,28 @@ class RustExtension:
         """
 
         return self._metadata(os.environ.get("CARGO", "cargo"), quiet)
+
+    def _chmod_strip(self, exe_path: str) -> None:
+        if sys.platform != "win32" and not self.debug:
+            args = []
+            if self.strip == Strip.All:
+                args.append("-x")
+            elif self.strip == Strip.Debug:
+                args.append("-S")
+
+            if args:
+                args.insert(0, "strip")
+                args.append(exe_path)
+                try:
+                    output = subprocess.check_output(args)
+                except subprocess.CalledProcessError:
+                    pass
+
+        # executables, win32(cygwin)-dll's, and shared libraries on
+        # Unix-like operating systems need X bits
+        mode = os.stat(exe_path).st_mode
+        mode |= (mode & 0o444) >> 2  # copy R bits to X
+        os.chmod(exe_path, mode)
 
     @lru_cache()
     def _metadata(self, cargo: str, quiet: bool) -> "CargoMetadata":
@@ -330,9 +361,13 @@ class RustBin(RustExtension):
             py_limited_api=False,
         )
 
-    def entry_points(self) -> List[str]:
-        return []
-
+    def install_script(self, module_name: str, exe_path: str, dylib_path: str, scripts_dir: str) -> None:
+        dirname, executable = os.path.split(exe_path)
+        ext_path = os.path.join(scripts_dir, executable)
+        log.info("Copying rust binary artifact from %s to %s", dylib_path, ext_path)
+        os.makedirs(scripts_dir, exist_ok=True)
+        shutil.copyfile(dylib_path, ext_path)
+        self._chmod_strip(ext_path)
 
 CargoMetadata = NewType("CargoMetadata", Dict[str, Any])
 

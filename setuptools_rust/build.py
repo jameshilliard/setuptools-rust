@@ -341,44 +341,27 @@ class build_rust(RustCommand):
                     ext_path += exe
 
                 os.makedirs(os.path.dirname(ext_path), exist_ok=True)
-                if isinstance(ext, RustBin):
-                    executable_name = module_name
-                    if exe is not None:
-                        executable_name += exe
-                    scripts_dir = os.path.join(
-                        build_ext.build_lib, self.data_dir, "scripts"
-                    )
-                    os.makedirs(scripts_dir, exist_ok=True)
-                    ext_path = os.path.join(scripts_dir, executable_name)
-                else:
-                    ext.install_script(module_name.split(".")[-1], ext_path)
+                # if isinstance(ext, RustBin):
+                #     executable_name = module_name
+                #     if exe is not None:
+                #         executable_name += exe
+                scripts_dir = os.path.join(
+                    build_ext.build_lib, self.data_dir, "scripts"
+                )
+                #     os.makedirs(scripts_dir, exist_ok=True)
+                #     ext_path = os.path.join(scripts_dir, executable_name)
+                # else:
+                build_scripts = self.get_finalized_command("build_scripts")
+                #scripts_dir = build_scripts.build_dir
+                print(f"module_name: {module_name}, ext_path: {ext_path}, dylib_path: {dylib_path}, scripts_dir: {scripts_dir}")
+                ext.install_script(module_name, ext_path, dylib_path, scripts_dir)
+                build_scripts.run()
             else:
                 ext_path = self.get_dylib_ext_path(ext, module_name)
                 os.makedirs(os.path.dirname(ext_path), exist_ok=True)
-
-            log.info("Copying rust artifact from %s to %s", dylib_path, ext_path)
-            shutil.copyfile(dylib_path, ext_path)
-
-            if sys.platform != "win32" and not debug_build:
-                args = []
-                if ext.strip == Strip.All:
-                    args.append("-x")
-                elif ext.strip == Strip.Debug:
-                    args.append("-S")
-
-                if args:
-                    args.insert(0, "strip")
-                    args.append(ext_path)
-                    try:
-                        output = subprocess.check_output(args)
-                    except subprocess.CalledProcessError:
-                        pass
-
-            # executables, win32(cygwin)-dll's, and shared libraries on
-            # Unix-like operating systems need X bits
-            mode = os.stat(ext_path).st_mode
-            mode |= (mode & 0o444) >> 2  # copy R bits to X
-            os.chmod(ext_path, mode)
+                log.info("Copying rust module artifact from %s to %s", dylib_path, ext_path)
+                shutil.copyfile(dylib_path, ext_path)
+                ext._chmod_strip(ext_path)
 
     def get_dylib_ext_path(self, ext: RustExtension, target_fname: str) -> str:
         assert self.plat_name is not None
